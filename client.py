@@ -25,3 +25,6 @@ class Client:
 
     def get_last_seen(self):
         return self.LastSeen
+
+    def __str__(self):
+        return f"ID: {self.ID}, Name: {self.Name}, PublicKey: {self.PublicKey}, LastSeen: {self.LastSeen}"

@@ -13,6 +13,7 @@ from message import Message
 
 # Server port file path
 SERVER_PORT_PATH = "port.info"
+SERVER_DB_NAME = "server.db"
 
 # Server's version TODO change if implemented the bonus
 SERVER_VERSION = 1
@@ -33,7 +34,10 @@ class Server:
         self.selector = selectors.DefaultSelector()
 
         # Create a DB client
-        self.db = DBConnection()
+        try:
+            self.db = DBConnection(SERVER_DB_NAME)
+        except Exception as e:
+            raise ValueError("DB error", e)
 
     def start(self):
 
@@ -45,6 +49,7 @@ class Server:
         self.selector.register(sock, selectors.EVENT_READ, self.accept)
 
         # Receive connections
+        print("Waiting for incoming connections...")
         while True:
             events = self.selector.select()
 
@@ -53,6 +58,7 @@ class Server:
                 callback(key.fileobj, mask)
 
     def accept(self, sock, mask):
+        # TODO handle disconnection
         connection, address = sock.accept()
         print(f"Received {connection} from {address}")
         connection.setblocking(False)
@@ -180,6 +186,29 @@ class Server:
 
         # Return a successful response to the client
         return Response(SERVER_VERSION, codes.CLIENTS_LIST_RETURNED_RESPONSE, len(payload), payload)
+
+    def get_client_public_key(self, request):
+        """
+        Retrieves a client's public key.
+        :param request: Request containing the id of the client whose public key to retrieve
+        :return: Response
+        """
+        payload = request.get_payload()
+        receiver_client_id = struct.unpack(f"<{sizes.CLIENT_ID_SIZE}s", payload[:sizes.CLIENT_ID_SIZE])[0]
+
+        # Retrieve the corresponding client from the DB
+        client = self.db.get_client_by_id(receiver_client_id)
+
+        if not client:
+            raise ValueError(f"Client with id: {receiver_client_id} not found")
+
+        # Pack the client's id and public key as the response
+        receiver_client_public_key = client.get_public_key()
+        response_payload = struct.pack(f"<{sizes.CLIENT_ID_SIZE}s{sizes.PUBLIC_KEY_SIZE}s",
+                                       receiver_client_id.encode("utf-8"), receiver_client_public_key.encode("utf-8"))
+
+        # Return a successful response to the client
+        return Response(SERVER_VERSION, codes.CLIENT_PUBLIC_KEY_RETURNED_RESPONSE, len(response_payload), response_payload)
 
     def send_client_message(self, request):
         """
