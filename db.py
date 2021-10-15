@@ -65,7 +65,7 @@ class DBConnection:
         :param client: client to insert
         """
         print(f"Adding client with id {client.get_id()} to {CLIENTS_TABLE_NAME}...")
-        if client is not Client:
+        if not isinstance(client, Client):
             raise ValueError("Expected to receive a Client but received:", client)
         # self.clients[client.get_id()] = client
         self.connection.execute(f"INSERT INTO {CLIENTS_TABLE_NAME} VALUES(?, ?, ?, ?)"
@@ -132,7 +132,7 @@ class DBConnection:
         :param message: message to insert
         """
         print(f"Adding message with id {message.get_id()} to {MESSAGES_TABLE_NAME}...")
-        if message is not Message:
+        if not isinstance(message, Message):
             raise ValueError("Expected to receive a Message but received:", message)
         self.connection.execute(f"INSERT INTO {MESSAGES_TABLE_NAME} VALUES(?, ?, ?, ?, ?)"
                                 , [message.get_id(), message.get_to_client(), message.get_from_client(),

@@ -73,8 +73,8 @@ class Server:
 
         # TODO handle disconnection
         if response:
-            print(f"Returning response: {repr(response)} to: {connection}")
-            connection.send(response)
+            print(f"Returning response: {response} to: {connection}")
+            connection.send(response.pack())
         else:
             print("Closing:", connection)
             self.selector.unregister(connection)
@@ -83,16 +83,16 @@ class Server:
     def handle_request(self, connection):
 
         # Read the request from the socket
-        try:
-            request = self.read_request(connection)
-        except Exception as e:
-            raise ValueError("Failed reading request due to:", e)
+        # try:
+        request = self.read_request(connection)
+        # except Exception as e:
+        #     raise ValueError("Failed reading request due to:", e)
 
         # Handle request according to the received code
         code = request.get_code()
 
         if code == codes.REGISTER_REQUEST:  # Register client
-            response = self.register_client(request)
+            response = self.register_client(request, connection)
 
         elif code == codes.GET_CLIENTS_LIST_REQUEST:  # Get all clients
             response = self.get_clients_list(request)
@@ -122,10 +122,10 @@ class Server:
         code = struct.unpack("<H", connection.recv(sizes.CODE_SIZE))[0]
         payload_size = struct.unpack("<I", connection.recv(sizes.PAYLOAD_SIZE_SIZE))[0]
 
-        if payload_size:
-            payload = struct.unpack(f"<{payload_size}s", connection.recv(payload_size))[0]
-        else:
-            payload = None
+        # if payload_size:
+        #     payload = struct.unpack(f"<{payload_size}s", connection.recv(payload_size))[0].decode("utf-8")
+        # else:
+        payload = None
 
         return Request(client_id, client_version, code, payload_size, payload)
 
@@ -140,23 +140,27 @@ class Server:
             port = int(data)
             return port
 
-    def register_client(self, request):
+    def register_client(self, request, connection):
         """
         Adds a new client to the DB.
         :param request: client Request
+        :param connection: connection to client
         :return: Response
         """
         # Extract the client's name and public key from the payload
-        payload = request.get_payload()
-        client_name = struct.unpack(f"<{sizes.NAME_SIZE}s", payload[0:sizes.NAME_SIZE])
-        public_key = struct.unpack(f"{sizes.PUBLIC_KEY_SIZE}s", payload[sizes.PUBLIC_KEY_SIZE:])
+        # payload = request.get_payload()
+        client_name = struct.unpack(f"<{sizes.NAME_SIZE}s", connection.recv(sizes.NAME_SIZE))[0].decode("utf-8")
+        public_key = struct.unpack(f"<{sizes.PUBLIC_KEY_SIZE}s", connection.recv(sizes.PUBLIC_KEY_SIZE))[0]
+
+        # Remove the null chars from the name
+        client_name = client_name.strip('\0')
 
         # Check if the client already exists in the DB
         if self.db.get_client_by_name(client_name):
             raise ValueError("Can't register an already existing client:", client_name)
 
         # Generate a unique client id
-        client_id = uuid.uuid4()
+        client_id = uuid.uuid4().bytes
 
         # Add a new client to the clients table
         client = Client(client_id, client_name, public_key, None)
@@ -208,7 +212,8 @@ class Server:
                                        receiver_client_id.encode("utf-8"), receiver_client_public_key.encode("utf-8"))
 
         # Return a successful response to the client
-        return Response(SERVER_VERSION, codes.CLIENT_PUBLIC_KEY_RETURNED_RESPONSE, len(response_payload), response_payload)
+        return Response(SERVER_VERSION, codes.CLIENT_PUBLIC_KEY_RETURNED_RESPONSE, len(response_payload),
+                        response_payload)
 
     def send_client_message(self, request):
         """
