@@ -14,8 +14,7 @@ class Response:
         :return: packed response
         """
         if self.payload:
-            return struct.pack(f"<BHI{self.payload_size}s",
-                               self.version, self.code, self.payload_size, self.payload.encode("utf-8"))
+            return struct.pack(f"<BHI{self.payload_size}s", self.version, self.code, self.payload_size, self.payload)
         return struct.pack("<BHI", self.version, self.code, self.payload_size)
 
     def __str__(self):

@@ -24,6 +24,11 @@ class DBConnection:
         self.connection = sqlite3.connect(db_name)
         self.connection.text_factory = bytes
 
+        # TODO delete
+        # self.connection.execute("DROP TABLE clients")
+        # self.connection.execute("DROP TABLE messages")
+        # self.connection.commit()
+
         # Ensure that the needed tables exist
         self.check_tables_exist()
 
@@ -86,10 +91,10 @@ class DBConnection:
         if not result:
             print(f"No client with ID {client_id} was found in {CLIENTS_TABLE_NAME} table")
             return None
-        client = Client(*result)
+        client = Client(*result[0])
         print(f"Retrieved client: {client}")
 
-        return Client(*result)
+        return Client(*result[0])
 
     def get_client_by_name(self, client_name):
         """
@@ -104,10 +109,10 @@ class DBConnection:
         if not result:
             print(f"No client with Name {client_name} was found in {CLIENTS_TABLE_NAME} table")
             return None
-        client = Client(*result)
+        client = Client(*result[0])
         print(f"Retrieved client: {client}")
 
-        return Client(*result)
+        return client
 
     def get_all_clients(self):
         """

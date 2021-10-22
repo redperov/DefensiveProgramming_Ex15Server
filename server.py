@@ -21,6 +21,8 @@ SERVER_VERSION = 1
 # Maximum allowed number of connections by the server
 MAX_CONNECTIONS_ALLOWED = 100
 
+# TODO: make sure the client is registered before requesting anything, both in the client and in the server
+
 
 class Server:
     def __init__(self):
@@ -51,17 +53,20 @@ class Server:
         # Receive connections
         print("Waiting for incoming connections...")
         while True:
-            events = self.selector.select()
+            try:
+                events = self.selector.select()
 
-            for key, mask in events:
-                callback = key.data
-                callback(key.fileobj, mask)
+                for key, mask in events:
+                    callback = key.data
+                    callback(key.fileobj, mask)
+            except Exception as e:
+                print("Unexpected error occurred:", e)
 
     def accept(self, sock, mask):
         # TODO handle disconnection
         connection, address = sock.accept()
         print(f"Received {connection} from {address}")
-        connection.setblocking(False)
+        connection.setblocking(False) # TODO change to true?
         self.selector.register(connection, selectors.EVENT_READ, self.read)
 
     def read(self, connection, mask):
@@ -73,8 +78,13 @@ class Server:
 
         # TODO handle disconnection
         if response:
-            print(f"Returning response: {response} to: {connection}")
-            connection.send(response.pack())
+            try:
+                print(f"Returning response: {response} to: {connection}")
+                connection.sendall(response.pack())
+            except Exception as e:
+                print(f"Unable to send response due to {e}, closing: {connection}")
+                self.selector.unregister(connection)
+                connection.close()
         else:
             print("Closing:", connection)
             self.selector.unregister(connection)
@@ -85,6 +95,9 @@ class Server:
         # Read the request from the socket
         # try:
         request = self.read_request(connection)
+
+        if not request:
+            return None
         # except Exception as e:
         #     raise ValueError("Failed reading request due to:", e)
 
@@ -117,7 +130,11 @@ class Server:
         :param connection: socket connection to client.
         :return: Request
         """
-        client_id = struct.unpack(f"<{sizes.CLIENT_ID_SIZE}s", connection.recv(sizes.CLIENT_ID_SIZE))[0].decode("utf-8")
+        raw_id = connection.recv(sizes.CLIENT_ID_SIZE)
+
+        if not raw_id:  # Check if the socket has data to read
+            return None
+        client_id = struct.unpack(f"<{sizes.CLIENT_ID_SIZE}s", raw_id)[0]
         client_version = struct.unpack("<B", connection.recv(sizes.VERSION_SIZE))[0]
         code = struct.unpack("<H", connection.recv(sizes.CODE_SIZE))[0]
         payload_size = struct.unpack("<I", connection.recv(sizes.PAYLOAD_SIZE_SIZE))[0]
@@ -153,11 +170,11 @@ class Server:
         public_key = struct.unpack(f"<{sizes.PUBLIC_KEY_SIZE}s", connection.recv(sizes.PUBLIC_KEY_SIZE))[0]
 
         # Remove the null chars from the name
-        client_name = client_name.strip('\0')
+        # client_name = client_name.strip('\0')
 
         # Check if the client already exists in the DB
         if self.db.get_client_by_name(client_name):
-            raise ValueError("Can't register an already existing client:", client_name)
+            raise ValueError(f"Can't register an already existing client: {client_name}")
 
         # Generate a unique client id
         client_id = uuid.uuid4().bytes
@@ -167,7 +184,21 @@ class Server:
         self.db.insert_client(client)
 
         # Return a successful response to the client
-        return Response(SERVER_VERSION, codes.REGISTRATION_SUCCESSFUL_RESPONSE, 0, None)
+        payload = client_id
+        payload_size = sizes.CLIENT_ID_SIZE
+        return Response(SERVER_VERSION, codes.REGISTRATION_SUCCESSFUL_RESPONSE, payload_size, payload)
+
+    def validate_client_registered(self, request):
+        """
+        Checks if the request was made by a registered client. If not, raises an exception.
+        :param request: Request containing a client id
+        :return: None
+        """
+        client_id = request.get_client_id()
+
+        # Check if a client with the given id exists in the DB
+        if not self.db.get_client_by_id(client_id):
+            raise ValueError(f"The requesting client id: {client_id} is not registered in the system")
 
     def get_clients_list(self, request):
         """
@@ -175,18 +206,21 @@ class Server:
         :param request: client Request
         :return: Response
         """
+        self.validate_client_registered(request)
+
         # Retrieve all the clients from the DB
         clients = self.db.get_all_clients()
 
         # Exclude the requesting user from the list
         requesting_client_id = request.get_client_id()
         filtered_clients = [client for client in clients if client.get_id() != requesting_client_id]
-        payload = ""
+        payload = b""
 
         # Pack the list of clients together as the response's payload
         for client in filtered_clients:
-            payload += struct.pack(f"<{sizes.CLIENT_ID_SIZE}s{len(client.get_name())}s",
-                                   client.get_id().encode("utf-8"), client.get_name().encode("utf-8"))
+            # payload += struct.pack(f"<{sizes.CLIENT_ID_SIZE}s{len(client.get_name())}s",
+            #                        client.get_id(), client.get_name())
+            payload += client.get_id() + client.get_name()
 
         # Return a successful response to the client
         return Response(SERVER_VERSION, codes.CLIENTS_LIST_RETURNED_RESPONSE, len(payload), payload)
@@ -209,7 +243,7 @@ class Server:
         # Pack the client's id and public key as the response
         receiver_client_public_key = client.get_public_key()
         response_payload = struct.pack(f"<{sizes.CLIENT_ID_SIZE}s{sizes.PUBLIC_KEY_SIZE}s",
-                                       receiver_client_id.encode("utf-8"), receiver_client_public_key.encode("utf-8"))
+                                       receiver_client_id, receiver_client_public_key.encode("utf-8"))
 
         # Return a successful response to the client
         return Response(SERVER_VERSION, codes.CLIENT_PUBLIC_KEY_RETURNED_RESPONSE, len(response_payload),
