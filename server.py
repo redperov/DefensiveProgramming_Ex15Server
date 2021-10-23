@@ -111,10 +111,10 @@ class Server:
             response = self.get_clients_list(request)
 
         elif code == codes.GET_CLIENT_PUBLIC_KEY_REQUEST:  # Get a client's public key
-            response = self.get_client_public_key(request)
+            response = self.get_client_public_key(request, connection)
 
         elif code == codes.SEND_CLIENT_MESSAGE_REQUEST:  # Send client a message
-            response = self.send_client_message(request)
+            response = self.send_client_message(request, connection)
 
         elif code == codes.GET_WAITING_MESSAGES_REQUEST:  # Get all the waiting messages
             response = self.get_waiting_messages(request)
@@ -225,53 +225,59 @@ class Server:
         # Return a successful response to the client
         return Response(SERVER_VERSION, codes.CLIENTS_LIST_RETURNED_RESPONSE, len(payload), payload)
 
-    def get_client_public_key(self, request):
+    def get_client_public_key(self, request, connection):
         """
         Retrieves a client's public key.
         :param request: Request containing the id of the client whose public key to retrieve
+        :param connection: connection to client
         :return: Response
         """
-        payload = request.get_payload()
-        receiver_client_id = struct.unpack(f"<{sizes.CLIENT_ID_SIZE}s", payload[:sizes.CLIENT_ID_SIZE])[0]
+        self.validate_client_registered(request)
+
+        # payload = request.get_payload()
+        requested_client_id = struct.unpack(f"<{sizes.CLIENT_ID_SIZE}s", connection.recv(sizes.CLIENT_ID_SIZE))[0]
 
         # Retrieve the corresponding client from the DB
-        client = self.db.get_client_by_id(receiver_client_id)
+        client = self.db.get_client_by_id(requested_client_id)
 
         if not client:
-            raise ValueError(f"Client with id: {receiver_client_id} not found")
+            raise ValueError(f"Client with id: {requested_client_id} not found")
 
         # Pack the client's id and public key as the response
-        receiver_client_public_key = client.get_public_key()
-        response_payload = struct.pack(f"<{sizes.CLIENT_ID_SIZE}s{sizes.PUBLIC_KEY_SIZE}s",
-                                       receiver_client_id, receiver_client_public_key.encode("utf-8"))
+        response_payload = client.get_id() + client.get_public_key()
+        # response_payload = struct.pack(f"<{sizes.CLIENT_ID_SIZE}s{sizes.PUBLIC_KEY_SIZE}s",
+        #                                receiver_client_id, receiver_client_public_key.encode("utf-8"))
 
         # Return a successful response to the client
         return Response(SERVER_VERSION, codes.CLIENT_PUBLIC_KEY_RETURNED_RESPONSE, len(response_payload),
                         response_payload)
 
-    def send_client_message(self, request):
+    def send_client_message(self, request, connection):
         """
         Adds a message to the messages table in the DB.
         :param request: Request containing a message
         :return: Response
         """
+        self.validate_client_registered(request)
+
         # Extract the the message type and its content
-        payload = request.get_payload()
-        current_position = 0
-        receiver_client_id = struct.unpack(f"<{sizes.CLIENT_ID_SIZE}s", payload[0:sizes.CLIENT_ID_SIZE])
-        current_position += sizes.CLIENT_ID_SIZE
-        message_type = struct.unpack("<B", payload[current_position:sizes.MESSAGE_TYPE_SIZE])
-        current_position += sizes.MESSAGE_TYPE_SIZE
-        content_size = struct.unpack("<I", payload[current_position:sizes.MESSAGE_CONTENT_SIZE_SIZE])
-        current_position += sizes.MESSAGE_CONTENT_SIZE_SIZE
-        message_content = struct.unpack(f"<{content_size}s", payload[current_position:])
+        # payload = request.get_payload()
+        # current_position = 0
+        receiver_client_id = struct.unpack(f"<{sizes.CLIENT_ID_SIZE}s", connection.recv(sizes.CLIENT_ID_SIZE))[0]
+        # current_position += sizes.CLIENT_ID_SIZE
+        message_type = struct.unpack("<B", connection.recv(sizes.MESSAGE_TYPE_SIZE))[0]
+        # current_position += sizes.MESSAGE_TYPE_SIZE
+        content_size = struct.unpack("<I", connection.recv(sizes.MESSAGE_CONTENT_SIZE_SIZE))[0]
+        # current_position += sizes.MESSAGE_CONTENT_SIZE_SIZE
+        message_content = struct.unpack(f"<{content_size}s", connection.recv(content_size))[0]
 
         # Save the message in the DB
         message = Message(receiver_client_id, request.get_client_id(), message_type, message_content)
         self.db.insert_message(message)
 
         # Pack the receiving client id and message id as the response payload
-        response_payload = struct.pack(f"<{sizes.CLIENT_ID_SIZE}sI", receiver_client_id, message.get_id())
+        # response_payload = struct.pack(f"<{sizes.CLIENT_ID_SIZE}sI", receiver_client_id, message.get_id())
+        response_payload = request.get_client_id() + message.get_id() # TODO decide whose id returns in the payload and apply to all responses
 
         # Return a successful response to the client
         return Response(SERVER_VERSION, codes.MESSAGE_SENT_TO_CLIENT_RESPONSE, len(response_payload), response_payload)
@@ -282,6 +288,8 @@ class Server:
         :param request: client Request
         :return: Response
         """
+        self.validate_client_registered(request)
+
         # Retrieve the client's waiting messages from the DB
         messages = self.db.get_messages_by_receiver_id(request.get_client_id())
         payload = struct.pack(f"<{sizes.CLIENT_ID_SIZE}s", request.get_client_id().encode("utf-8"))
