@@ -16,7 +16,7 @@ SERVER_PORT_PATH = "port.info"
 SERVER_DB_NAME = "server.db"
 
 # Server's version TODO change if implemented the bonus
-SERVER_VERSION = 1
+SERVER_VERSION = 2
 
 # Maximum allowed number of connections by the server
 MAX_CONNECTIONS_ALLOWED = 100
@@ -90,6 +90,9 @@ class Server:
             self.selector.unregister(connection)
             connection.close()
 
+        # Clean data from the server after sending a response
+        self.clean_after_response(response)
+
     def handle_request(self, connection):
 
         # Read the request from the socket
@@ -122,6 +125,13 @@ class Server:
             raise ValueError("Received illegal request code", code)
 
         return response
+
+    def clean_after_response(self, response):
+        if not response or not response.get_messages_to_delete():
+            return
+
+        # Delete messages that were successfully sent to the client
+        self.db.delete_messages_by_ids(response.get_messages_to_delete())
 
     @staticmethod
     def read_request(connection):
@@ -265,11 +275,15 @@ class Server:
         # current_position = 0
         receiver_client_id = struct.unpack(f"<{sizes.CLIENT_ID_SIZE}s", connection.recv(sizes.CLIENT_ID_SIZE))[0]
         # current_position += sizes.CLIENT_ID_SIZE
-        message_type = struct.unpack("<B", connection.recv(sizes.MESSAGE_TYPE_SIZE))[0]
+        message_type = struct.unpack(f"<{sizes.MESSAGE_TYPE_SIZE}s", connection.recv(sizes.MESSAGE_TYPE_SIZE))[0]
         # current_position += sizes.MESSAGE_TYPE_SIZE
-        content_size = struct.unpack("<I", connection.recv(sizes.MESSAGE_CONTENT_SIZE_SIZE))[0]
-        # current_position += sizes.MESSAGE_CONTENT_SIZE_SIZE
-        message_content = struct.unpack(f"<{content_size}s", connection.recv(content_size))[0]
+        content_size = int(struct.unpack("<I", connection.recv(sizes.MESSAGE_CONTENT_SIZE_SIZE))[0])
+
+        if content_size > 0:
+            # current_position += sizes.MESSAGE_CONTENT_SIZE_SIZE
+            message_content = struct.unpack(f"<{content_size}s", connection.recv(content_size))[0]
+        else:
+            message_content = None
 
         # Save the message in the DB
         message = Message(receiver_client_id, request.get_client_id(), message_type, message_content)
@@ -293,10 +307,16 @@ class Server:
         # Retrieve the client's waiting messages from the DB
         messages = self.db.get_messages_by_receiver_id(request.get_client_id())
         payload = struct.pack(f"<{sizes.CLIENT_ID_SIZE}s", request.get_client_id().encode("utf-8"))
+        messages_ids_to_delete = []
 
         for message in messages:
             payload += struct.pack(f"<IBI{len(message.get_content())}s", message.get_id(), message.get_type(),
                                    len(message.get_content()), message.get_content().encode("utf-8"))
+            messages_ids_to_delete.append(message.get_id())
 
-        # TODO delete messages after sending, maybe move the send into each handler method
-        return Response(SERVER_VERSION, codes.WAITING_MESSAGES_RETURNED_RESPONSE, len(payload), payload)
+        response = Response(SERVER_VERSION, codes.WAITING_MESSAGES_RETURNED_RESPONSE, len(payload), payload)
+
+        # Mark the messages for deletion after sending
+        response.set_messages_to_delete(messages_ids_to_delete)
+
+        return response

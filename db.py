@@ -172,3 +172,10 @@ class DBConnection:
         print(f"Retrieved messages: {messages}")
 
         return messages
+
+    def delete_messages_by_ids(self, ids):
+        print("Deleting messages with ids:", ids)
+        query = "DELETE FROM " + MESSAGES_TABLE_NAME + " WHERE id IN (%s)" % ','.join(['?'] * len(ids))
+        self.connection.execute(query, ids)
+        self.connection.commit()
+        print("successfully delete messages")
