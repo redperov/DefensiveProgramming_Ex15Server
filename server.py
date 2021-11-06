@@ -21,6 +21,7 @@ SERVER_VERSION = 2
 # Maximum allowed number of connections by the server
 MAX_CONNECTIONS_ALLOWED = 100
 
+
 # TODO: make sure the client is registered before requesting anything, both in the client and in the server
 
 
@@ -66,7 +67,7 @@ class Server:
         # TODO handle disconnection
         connection, address = sock.accept()
         print(f"Received {connection} from {address}")
-        connection.setblocking(False) # TODO change to true?
+        connection.setblocking(False)  # TODO change to true?
         self.selector.register(connection, selectors.EVENT_READ, self.read)
 
     def read(self, connection, mask):
@@ -275,7 +276,7 @@ class Server:
         # current_position = 0
         receiver_client_id = struct.unpack(f"<{sizes.CLIENT_ID_SIZE}s", connection.recv(sizes.CLIENT_ID_SIZE))[0]
         # current_position += sizes.CLIENT_ID_SIZE
-        message_type = struct.unpack(f"<{sizes.MESSAGE_TYPE_SIZE}s", connection.recv(sizes.MESSAGE_TYPE_SIZE))[0]
+        message_type = struct.unpack("<B", connection.recv(sizes.MESSAGE_TYPE_SIZE))[0]
         # current_position += sizes.MESSAGE_TYPE_SIZE
         content_size = int(struct.unpack("<I", connection.recv(sizes.MESSAGE_CONTENT_SIZE_SIZE))[0])
 
@@ -286,12 +287,12 @@ class Server:
             message_content = None
 
         # Save the message in the DB
-        message = Message(receiver_client_id, request.get_client_id(), message_type, message_content)
+        message = Message(None, receiver_client_id, request.get_client_id(), message_type, message_content)
         self.db.insert_message(message)
 
         # Pack the receiving client id and message id as the response payload
         # response_payload = struct.pack(f"<{sizes.CLIENT_ID_SIZE}sI", receiver_client_id, message.get_id())
-        response_payload = request.get_client_id() + message.get_id() # TODO decide whose id returns in the payload and apply to all responses
+        response_payload = request.get_client_id() + message.get_id()  # TODO decide whose id returns in the payload and apply to all responses
 
         # Return a successful response to the client
         return Response(SERVER_VERSION, codes.MESSAGE_SENT_TO_CLIENT_RESPONSE, len(response_payload), response_payload)
@@ -306,12 +307,24 @@ class Server:
 
         # Retrieve the client's waiting messages from the DB
         messages = self.db.get_messages_by_receiver_id(request.get_client_id())
-        payload = struct.pack(f"<{sizes.CLIENT_ID_SIZE}s", request.get_client_id().encode("utf-8"))
+
+        if not messages:
+            return Response(SERVER_VERSION, codes.WAITING_MESSAGES_RETURNED_RESPONSE, 0, payload=None)
+
+        payload = b""
         messages_ids_to_delete = []
 
         for message in messages:
-            payload += struct.pack(f"<IBI{len(message.get_content())}s", message.get_id(), message.get_type(),
-                                   len(message.get_content()), message.get_content().encode("utf-8"))
+
+            if message.get_content():  # Message contains content
+                payload += struct.pack(f"<{sizes.CLIENT_ID_SIZE}s{sizes.MESSAGE_ID_SIZE}sBI{len(message.get_content())}s",
+                                       message.get_from_client(), message.get_id(), int(message.get_type().decode()),
+                                       len(message.get_content()), message.get_content())
+            else:  # Message without content
+                payload += struct.pack(f"<{sizes.CLIENT_ID_SIZE}s{len(message.get_id())}sBI",
+                                       message.get_from_client(), message.get_id(), int(message.get_type().decode()), 0)
+
+            # Mark the message for deletion
             messages_ids_to_delete.append(message.get_id())
 
         response = Response(SERVER_VERSION, codes.WAITING_MESSAGES_RETURNED_RESPONSE, len(payload), payload)

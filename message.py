@@ -2,20 +2,23 @@
 import uuid
 import sizes
 
-class Message:
-    # Used to create an incremental id
-    # id_counter = itertools.count()
 
-    def __init__(self, ToClient, FromClient, Type, Content):
+class Message:
+
+    def __init__(self, ID, ToClient, FromClient, Type, Content):
         """
         Constructor.
+        :param ID: message id, if left empty a new id will be generated
         :param ToClient: message recipient
         :param FromClient: message sender
         :param Type: message type
         :param Content: message content
         """
         # self.ID = next(Message.id_counter)  # Get the next value from the incremental id counter
-        self.ID = uuid.uuid4().bytes[:sizes.MESSAGE_ID_SIZE]
+        if ID:
+            self.ID = ID
+        else:
+            self.ID = uuid.uuid4().bytes[:sizes.MESSAGE_ID_SIZE]
         self.ToClient = ToClient
         self.FromClient = FromClient
         self.Type = Type
